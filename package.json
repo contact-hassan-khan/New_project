@@ -1,0 +1,29 @@
+{
+  "name": "cyber-elite",
+  "version": "1.0.0",
+  "description": "Cyber Elite - Enterprise Cybersecurity Services & Training Institute",
+  "main": "backend/server.js",
+  "scripts": {
+    "start": "node backend/server.js",
+    "dev": "nodemon backend/server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "cybersecurity",
+    "training",
+    "enterprise",
+    "vapt",
+    "soc"
+  ],
+  "author": "Cyber Elite",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "multer": "^2.2.0",
+    "nodemailer": "^9.0.3",
+    "nodemon": "^3.1.14",
+    "uuid": "^14.0.1"
+  }
+}
