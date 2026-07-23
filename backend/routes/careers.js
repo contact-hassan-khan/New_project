@@ -2,33 +2,37 @@ const express = require('express');
 const router = express.Router();
 const path = require('path');
 const fs = require('fs');
-const { v4: uuidv4 } = require('uuid');
-const { uploadResume } = require('../middleware/upload');
 
-const applicationsDir = path.join(__dirname, '..', 'data', 'applications.json');
-const logsFile = path.join(__dirname, '../data/logs.json');
+const dataDir = path.join(__dirname, '..', 'data');
+const applicationsDir = path.join(dataDir, 'applications.json');
+const logsPath = path.join(dataDir, 'activity_logs.json');
 
-// Logging middleware
-const logAction = (action, details, user) => {
-    let logs = [];
-    if (fs.existsSync(logsFile)) {
-        logs = JSON.parse(fs.readFileSync(logsFile, 'utf8'));
+// Initialize activity logs
+if (!fs.existsSync(logsPath)) {
+    fs.writeFileSync(logsPath, JSON.stringify([]));
+}
+
+// Activity logging function
+const logActivity = (action, user, details = {}) => {
+    try {
+        const logs = JSON.parse(fs.readFileSync(logsPath, 'utf8'));
+        logs.unshift({
+            timestamp: new Date().toISOString(),
+            action,
+            user: user ? user.username : 'anonymous',
+            role: user ? user.role : 'unknown',
+            ip: details.ip || 'unknown',
+            details
+        });
+        // Keep only last 1000 logs
+        if (logs.length > 1000) logs.splice(1000);
+        fs.writeFileSync(logsPath, JSON.stringify(logs, null, 2));
+    } catch (error) {
+        console.error('Error logging activity:', error);
     }
-    
-    logs.unshift({
-        id: uuidv4(),
-        timestamp: new Date().toISOString(),
-        action,
-        details,
-        user: user || 'system',
-        ip: 'localhost'
-    });
-    
-    // Keep only last 1000 logs
-    if (logs.length > 1000) logs = logs.slice(0, 1000);
-    
-    fs.writeFileSync(logsFile, JSON.stringify(logs, null, 2));
 };
+
+const { uploadResume } = require('../middleware/upload');
 
 // Helper function to read applications data
 const readApplications = () => {
@@ -51,47 +55,25 @@ const writeApplications = (applications) => {
 // POST new job application
 router.post('/', uploadResume.single('resume'), (req, res) => {
     try {
-        const { 
-            name, 
-            email, 
-            phone, 
-            position,
-            experience,
-            skills,
-            coverLetter 
-        } = req.body;
-        
-        // Validation
+        const { name, email, phone, position, experience, skills, coverLetter } = req.body;
+
         if (!name || !email || !position) {
-            return res.status(400).json({
-                success: false,
-                message: 'Name, email, and position are required'
-            });
+            return res.status(400).json({ success: false, message: 'Name, email, and position are required' });
         }
-        
-        // Email validation regex
+
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(email)) {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid email format'
-            });
+            return res.status(400).json({ success: false, message: 'Invalid email format' });
         }
-        
+
         if (!req.file) {
-            return res.status(400).json({
-                success: false,
-                message: 'Resume file is required'
-            });
+            return res.status(400).json({ success: false, message: 'Resume file is required' });
         }
-        
+
         const applications = readApplications();
         const newApplication = {
-            id: uuidv4(),
-            name,
-            email,
-            phone: phone || '',
-            position,
+            id: `application_${Date.now()}`,
+            name, email, phone: phone || '', position,
             experience: experience || '',
             skills: skills ? skills.split(',').map(s => s.trim()) : [],
             coverLetter: coverLetter || '',
@@ -101,113 +83,59 @@ router.post('/', uploadResume.single('resume'), (req, res) => {
             status: 'pending',
             appliedAt: new Date().toISOString()
         };
-        
+
         applications.push(newApplication);
         writeApplications(applications);
-        
-        // Log the action
-        logAction('JOB_APPLICATION', {
-            name,
-            email,
-            position
-        }, 'applicant');
-        
+
+        logActivity('JOB_APPLICATION', { username: email, role: 'applicant' }, { name, email, position, ip: req.ip });
         console.log(`💼 New job application from ${name} for ${position}`);
-        
-        res.status(201).json({
-            success: true,
-            message: 'Your application has been submitted successfully! We will review it and get back to you.',
-            data: newApplication
-        });
+
+        res.status(201).json({ success: true, message: 'Your application has been submitted successfully!', data: newApplication });
     } catch (error) {
-        res.status(500).json({
-            success: false,
-            message: 'Error submitting application',
-            error: error.message
-        });
+        res.status(500).json({ success: false, message: 'Error submitting application', error: error.message });
     }
 });
 
-// GET all applications (Admin only)
+// GET all applications
 router.get('/', (req, res) => {
     try {
         const applications = readApplications();
-        
-        // Sort by date, newest first
         applications.sort((a, b) => new Date(b.appliedAt) - new Date(a.appliedAt));
-        
-        res.json({
-            success: true,
-            count: applications.length,
-            data: applications
-        });
+        res.json({ success: true, count: applications.length, data: applications });
     } catch (error) {
-        res.status(500).json({
-            success: false,
-            message: 'Error fetching applications',
-            error: error.message
-        });
+        res.status(500).json({ success: false, message: 'Error fetching applications', error: error.message });
     }
 });
 
-// GET single application by ID
+// GET single application
 router.get('/:id', (req, res) => {
     try {
         const applications = readApplications();
         const application = applications.find(a => a.id === req.params.id);
-        
-        if (!application) {
-            return res.status(404).json({
-                success: false,
-                message: 'Application not found'
-            });
-        }
-        
-        res.json({
-            success: true,
-            data: application
-        });
+        if (!application) return res.status(404).json({ success: false, message: 'Application not found' });
+        res.json({ success: true, data: application });
     } catch (error) {
-        res.status(500).json({
-            success: false,
-            message: 'Error fetching application',
-            error: error.message
-        });
+        res.status(500).json({ success: false, message: 'Error fetching application', error: error.message });
     }
 });
 
-// PUT update application status
+// PUT update application
 router.put('/:id', (req, res) => {
     try {
         const { status, notes, rating } = req.body;
         const applications = readApplications();
         const index = applications.findIndex(a => a.id === req.params.id);
-        
-        if (index === -1) {
-            return res.status(404).json({
-                success: false,
-                message: 'Application not found'
-            });
-        }
-        
+        if (index === -1) return res.status(404).json({ success: false, message: 'Application not found' });
+
         if (status) applications[index].status = status;
         if (notes) applications[index].notes = notes;
         if (rating) applications[index].rating = rating;
         applications[index].updatedAt = new Date().toISOString();
-        
+
         writeApplications(applications);
-        
-        res.json({
-            success: true,
-            message: 'Application updated successfully',
-            data: applications[index]
-        });
+        res.json({ success: true, message: 'Application updated', data: applications[index] });
     } catch (error) {
-        res.status(500).json({
-            success: false,
-            message: 'Error updating application',
-            error: error.message
-        });
+        res.status(500).json({ success: false, message: 'Error updating application', error: error.message });
     }
 });
 
@@ -216,35 +144,18 @@ router.delete('/:id', (req, res) => {
     try {
         const applications = readApplications();
         const index = applications.findIndex(a => a.id === req.params.id);
-        
-        if (index === -1) {
-            return res.status(404).json({
-                success: false,
-                message: 'Application not found'
-            });
-        }
-        
-        // Delete resume file
+        if (index === -1) return res.status(404).json({ success: false, message: 'Application not found' });
+
         if (applications[index].resumeFileName) {
             const filePath = path.join(__dirname, '..', 'uploads', 'resumes', applications[index].resumeFileName);
-            if (fs.existsSync(filePath)) {
-                fs.unlinkSync(filePath);
-            }
+            if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
         }
-        
+
         applications.splice(index, 1);
         writeApplications(applications);
-        
-        res.json({
-            success: true,
-            message: 'Application deleted successfully'
-        });
+        res.json({ success: true, message: 'Application deleted' });
     } catch (error) {
-        res.status(500).json({
-            success: false,
-            message: 'Error deleting application',
-            error: error.message
-        });
+        res.status(500).json({ success: false, message: 'Error deleting application', error: error.message });
     }
 });
 
