@@ -2,33 +2,37 @@ const express = require('express');
 const router = express.Router();
 const path = require('path');
 const fs = require('fs');
-const { v4: uuidv4 } = require('uuid');
-const { uploadSyllabus } = require('../middleware/upload');
 
-const syllabiDir = path.join(__dirname, '..', 'data', 'syllabi.json');
-const logsFile = path.join(__dirname, '../data/logs.json');
+const dataDir = path.join(__dirname, '..', 'data');
+const syllabiDir = path.join(dataDir, 'syllabi.json');
+const logsPath = path.join(dataDir, 'activity_logs.json');
 
-// Logging middleware
-const logAction = (action, details, user) => {
-    let logs = [];
-    if (fs.existsSync(logsFile)) {
-        logs = JSON.parse(fs.readFileSync(logsFile, 'utf8'));
+// Initialize activity logs
+if (!fs.existsSync(logsPath)) {
+    fs.writeFileSync(logsPath, JSON.stringify([]));
+}
+
+// Activity logging function
+const logActivity = (action, user, details = {}) => {
+    try {
+        const logs = JSON.parse(fs.readFileSync(logsPath, 'utf8'));
+        logs.unshift({
+            timestamp: new Date().toISOString(),
+            action,
+            user: user ? user.username : 'anonymous',
+            role: user ? user.role : 'unknown',
+            ip: details.ip || 'unknown',
+            details
+        });
+        // Keep only last 1000 logs
+        if (logs.length > 1000) logs.splice(1000);
+        fs.writeFileSync(logsPath, JSON.stringify(logs, null, 2));
+    } catch (error) {
+        console.error('Error logging activity:', error);
     }
-    
-    logs.unshift({
-        id: uuidv4(),
-        timestamp: new Date().toISOString(),
-        action,
-        details,
-        user: user || 'system',
-        ip: 'localhost'
-    });
-    
-    // Keep only last 1000 logs
-    if (logs.length > 1000) logs = logs.slice(0, 1000);
-    
-    fs.writeFileSync(logsFile, JSON.stringify(logs, null, 2));
 };
+
+const { uploadSyllabus } = require('../middleware/upload');
 
 // Helper function to read syllabi data
 const readSyllabi = () => {
@@ -106,7 +110,7 @@ router.post('/', uploadSyllabus.single('file'), (req, res) => {
         
         const syllabi = readSyllabi();
         const newSyllabus = {
-            id: uuidv4(),
+            id: `syllabus_${Date.now()}`,
             title,
             courseId,
             description: description || '',
@@ -124,11 +128,12 @@ router.post('/', uploadSyllabus.single('file'), (req, res) => {
         writeSyllabi(syllabi);
         
         // Log the action
-        logAction('SYLLABUS_UPLOAD', {
+        logActivity('SYLLABUS_UPLOAD', req.user, {
             title,
             courseId,
-            fileName: req.file?.originalname
-        }, uploadedBy);
+            fileName: req.file?.originalname,
+            ip: req.ip
+        });
         
         res.status(201).json({
             success: true,
@@ -181,10 +186,11 @@ router.put('/:id', uploadSyllabus.single('file'), (req, res) => {
         writeSyllabi(syllabi);
         
         // Log the action
-        logAction('SYLLABUS_UPDATE', {
+        logActivity('SYLLABUS_UPDATE', req.user, {
             id: req.params.id,
-            title: syllabi[index].title
-        }, uploadedBy);
+            title: syllabi[index].title,
+            ip: req.ip
+        });
         
         res.json({
             success: true,
@@ -227,10 +233,11 @@ router.delete('/:id', (req, res) => {
         writeSyllabi(syllabi);
         
         // Log the action
-        logAction('SYLLABUS_DELETE', {
+        logActivity('SYLLABUS_DELETE', req.user, {
             id: req.params.id,
-            title: deletedSyllabus.title
-        }, req.body.uploadedBy);
+            title: deletedSyllabus.title,
+            ip: req.ip
+        });
         
         res.json({
             success: true,
@@ -280,11 +287,12 @@ router.post('/:id/download', (req, res) => {
         writeSyllabi(syllabi);
         
         // Log the action
-        logAction('SYLLABUS_DOWNLOAD', {
+        logActivity('SYLLABUS_DOWNLOAD', { username: userInfo?.email || 'student', role: 'student' }, {
             id: req.params.id,
             title: syllabi[index].title,
-            user: userInfo?.email
-        }, 'student');
+            user: userInfo?.email,
+            ip: req.ip
+        });
         
         res.json({
             success: true,
